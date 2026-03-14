@@ -17,14 +17,12 @@
         .paragraph-box { border: 1px solid #ddd; border-radius: 6px; margin-top: 20px; padding: 15px; background-color: #fff; }
         .para-number { font-size: 1.2em; font-weight: bold; color: #8e44ad; margin-bottom: 15px; border-bottom: 2px solid #8e44ad; display: inline-block; padding-bottom: 5px; }
         
-        /* Bố cục chia 2 cột cho màn hình rộng */
         .flex-container { display: flex; gap: 20px; }
         .col-goc, .col-dich { flex: 1; min-width: 0; }
         .col-goc { border-right: 1px dashed #ccc; padding-right: 20px; }
         
         .section-label { font-size: 0.85em; color: #888; text-transform: uppercase; margin-bottom: 10px; display: block; font-weight: bold;}
         
-        /* Đánh số câu */
         .sentence-item { margin: 8px 0; line-height: 1.8; }
         .sentence-num {
             display: inline-block; background-color: #ffeb3b; color: #d35400; font-size: 0.8em; font-weight: bold;
@@ -34,7 +32,6 @@
         #status { text-align: center; font-size: 1.1em; margin-top: 15px; font-weight: bold; }
         .loading { color: #e67e22; } .error { color: red; } .success { color: green; }
         
-        /* Reponsive cho điện thoại */
         @media (max-width: 768px) {
             .flex-container { flex-direction: column; }
             .col-goc { border-right: none; padding-right: 0; border-bottom: 1px dashed #ccc; padding-bottom: 20px; margin-bottom: 20px; }
@@ -44,9 +41,9 @@
 <body>
 
 <div class="container">
-    <h1>Công cụ ghép Đoạn văn (Wikipedia/Blog)</h1>
+    <h1>Công cụ ghép Đoạn văn (Wikipedia/Blog/Báo)</h1>
     <p style="text-align: center; color: #d35400; font-size: 0.9em;">
-        <i>⚠️ Hãy nhớ BẬT tiện ích "Allow CORS" trên trình duyệt.</i>
+        <i>Hệ thống tự động vượt tường lửa. Không cần dùng tiện ích Allow CORS!</i>
     </p>
     
     <div class="input-group">
@@ -65,18 +62,49 @@
 </div>
 
 <script>
+    // Trình lấy dữ liệu BẤT TỬ (Tự động chuyển đổi 3 cách thức khác nhau nếu bị chặn)
     async function fetchHtml(url) {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`Lỗi kết nối (${response.status}). Vui lòng kiểm tra link hoặc bật Allow CORS!`);
-        const htmlText = await response.text();
+        let htmlText = "";
+        
+        // CÁCH 1: Dùng AllOrigins (Thường qua mặt được Wikipedia rất tốt)
+        try {
+            const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.contents) htmlText = data.contents;
+            }
+        } catch (e) { console.log("Cách 1 lỗi, đang thử Cách 2..."); }
+
+        // CÁCH 2: Dùng Codetabs Proxy
+        if (!htmlText || htmlText.length < 500) {
+            try {
+                const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`);
+                if (res.ok) htmlText = await res.text();
+            } catch (e) { console.log("Cách 2 lỗi, đang thử Cách 3..."); }
+        }
+
+        // CÁCH 3: Gọi trực tiếp (Phòng khi người dùng đang bật tiện ích Allow CORS)
+        if (!htmlText || htmlText.length < 500) {
+            try {
+                const res = await fetch(url);
+                if (res.ok) htmlText = await res.text();
+            } catch (e) { console.log("Cách 3 lỗi."); }
+        }
+
+        // Kiểm tra xem có lấy được gì không
+        if (!htmlText || htmlText.length < 500) {
+            throw new Error(`Trang web này bảo mật quá cao hoặc link bị sai. Không thể trích xuất dữ liệu!`);
+        }
+
         const parser = new DOMParser();
         return parser.parseFromString(htmlText, "text/html");
     }
 
+    // Hàm cắt câu và đánh số
     function danhSoThuTuCau(text) {
-        if (!text) return '<i style="color:#aaa;">(Không có đoạn tương ứng)</i>';
+        if (!text) return '<i style="color:#aaa;">(Không có đoạn tương ứng ở bên này)</i>';
         
-        // Dọn dẹp các trích dẫn dạng [1], [a], [cần dẫn nguồn] của Wikipedia
+        // Dọn sạch các [1], [a], [cần dẫn nguồn]... trên Wikipedia
         text = text.replace(/\[.*?\]/g, ''); 
         
         let sentences = text.match(/.*?[.?!]+(?:["'”]*)(?:\s+|$)|.+/g);
@@ -95,21 +123,22 @@
         return resultHtml;
     }
 
-    // Hàm lấy danh sách các đoạn văn bản chính đã được sửa lỗi đọc text
+    // Hàm thông minh để tìm nội dung chính
     function layCacDoanVan(doc) {
-        let container = doc.querySelector('.mw-parser-output') || doc.body;
-        if (!container) return [];
+        // Ưu tiên tìm vùng chứa nội dung chính để tránh lấy nhầm Menu, Header, Footer
+        let container = doc.querySelector('.mw-parser-output') // Chuẩn của Wikipedia
+                     || doc.querySelector('article') // Chuẩn của báo điện tử / Blog
+                     || doc.querySelector('.content') 
+                     || doc.querySelector('main')
+                     || doc.body; // Cực chẳng đã mới lấy toàn thân trang web
         
-        // Quét tất cả thẻ <p>
         let pTags = container.querySelectorAll('p');
         let paragraphs = [];
         
         pTags.forEach(p => {
-            // Dùng textContent thay vì innerText để đọc chuẩn dữ liệu nền
             let text = p.textContent.trim();
-            
-            // Chỉ lấy đoạn văn có nghĩa (bỏ qua các khoảng trắng rác)
-            if (text.length > 30) {
+            // Lọc cực gắt: Phải dài hơn 40 ký tự mới được tính là 1 đoạn văn (Loại bỏ các dòng trống, chú thích ảnh)
+            if (text.length > 40) {
                 paragraphs.push(text);
             }
         });
@@ -123,11 +152,11 @@
         const contentDiv = document.getElementById('content');
 
         if (!urlGoc || !urlDich) {
-            statusDiv.innerHTML = '<span class="error">Vui lòng dán đủ 2 link!</span>';
+            statusDiv.innerHTML = '<span class="error">Vui lòng dán đủ 2 link vào ô trống!</span>';
             return;
         }
 
-        statusDiv.innerHTML = '<span class="loading">Đang tải và lọc văn bản... ⚡</span>';
+        statusDiv.innerHTML = '<span class="loading">Đang phân tích, vượt tường lửa và gom chữ... ⏳</span>';
         contentDiv.innerHTML = ''; 
 
         try {
@@ -140,14 +169,14 @@
             const doanDich = layCacDoanVan(docDich);
 
             if (doanGoc.length === 0 && doanDich.length === 0) {
-                statusDiv.innerHTML = '<span class="error">Không tìm thấy đoạn văn nào trên trang này! Thử link khác xem sao.</span>';
+                statusDiv.innerHTML = '<span class="error">Đã vào được trang web, nhưng không tìm thấy đoạn văn nào! Có thể trang này dùng cấu trúc HTML đặc biệt.</span>';
                 return;
             }
 
             const maxParas = Math.max(doanGoc.length, doanDich.length);
-            statusDiv.innerHTML = `<span class="success">✅ Đã lọc được ${doanGoc.length} đoạn gốc và ${doanDich.length} đoạn bản dịch.</span>`;
+            statusDiv.innerHTML = `<span class="success">✅ TUYỆT VỜI! Đã ghép nối ${doanGoc.length} đoạn gốc và ${doanDich.length} đoạn bản dịch.</span>`;
 
-            // In tiêu đề
+            // Khung Tiêu Đề
             const titleBox = document.createElement('div');
             titleBox.className = 'paragraph-box';
             titleBox.innerHTML = `
@@ -165,7 +194,7 @@
             `;
             contentDiv.appendChild(titleBox);
 
-            // In từng đoạn văn
+            // Khung từng đoạn văn
             for (let i = 0; i < maxParas; i++) {
                 let textGoc = doanGoc[i] || ''; 
                 let textDich = doanDich[i] || '';
